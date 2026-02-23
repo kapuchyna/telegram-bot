@@ -5,10 +5,10 @@ from telebot import types, apihelper
 
 # ================= НАСТРОЙКИ =================
 
-TOKEN = os.getenv("8358989018:AAH67ZtDtR5d_sv-DjfAZN76ZkDOkhY4LmM")  # Railway Variable
+TOKEN = "8358989018:AAH67ZtDtR5d_sv-DjfAZN76ZkDOkhY4LmM" # Railway Variable
 ADMIN_ID = 617404776
 
-CHANNEL_USERNAME = "yerimbetde"  # ← ВСТАВЬ СВОЙ КАНАЛ
+CHANNEL_USERNAME = "@yerimbetde"  # ← ВСТАВЬ СВОЙ КАНАЛ
 
 apihelper.CONNECT_TIMEOUT = 10
 apihelper.READ_TIMEOUT = 60
