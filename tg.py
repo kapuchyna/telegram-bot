@@ -1,305 +1,181 @@
-import os
+import re
 import time
 import telebot
 from telebot import types, apihelper
 
-# =========================
-# CONFIG
-# =========================
-TOKEN = "8358989018:AAH67ZtDtR5d_sv-DjfAZN76ZkDOkhY4LmM"  # set in Railway Variables (TOKEN=xxxx:yyyy)
-ADMIN_ID = 617404776        # new admin id (number)
+# ================== НАСТРОЙКИ ==================
+TOKEN = "8358989018:AAH67ZtDtR5d_sv-DjfAZN76ZkDOkhY4LmM"
+ADMIN_ID = 617404776  # ваш новый admin id (число)
 
-# Put your channel username WITH @, e.g. "@yerimbetde"
-CHANNEL_USERNAME = os.getenv("yerimbetde") or "@yerimbetde"
+PRICE = 30000
 
+CARD_NUMBER = "4400430338004382"
+CARD_HOLDER = "NAGYZKHAN YERIMBET"
+
+# Если хотите вести в канал после подтверждения:
+# 1) если канал публичный: "@yourchannel"
+# 2) если приватный: "https://t.me/+XXXXXXXXXXXX" (инвайт-ссылка)
+CHANNEL_LINK = "https://t.me/+_8uSxwltJ_piYWQ6"  # поменяйте на свой реальный линк
+
+# Таймауты (чтобы меньше таймаутов)
 apihelper.CONNECT_TIMEOUT = 10
 apihelper.READ_TIMEOUT = 60
 
-if not TOKEN:
-    raise ValueError("TOKEN is not set. Add TOKEN to environment variables (Railway Variables or local env).")
-
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
-# user_id -> {"amount": str|None, "state": "wait_amount"/"wait_receipt"/None}
-user_state = {}
+# Состояния: ждём чек от пользователя
+pending_users = {}  # user_id -> True
 
-def st(uid: int):
-    user_state.setdefault(uid, {"amount": None, "state": None})
-    return user_state[uid]
 
-def set_state(uid: int, state: str | None):
-    st(uid)["state"] = state
+# ================== УТИЛИТЫ ==================
+def norm(text: str) -> str:
+    if not text:
+        return ""
+    t = text.strip().lower()
+    # убрать эмодзи/символы в начале (например "📄 " / "💰 ")
+    t = re.sub(r"^[^\wа-яё]+", "", t, flags=re.IGNORECASE)
+    # убрать лишние пробелы
+    t = re.sub(r"\s+", " ", t)
+    return t
 
-# =========================
-# TEXTS (official)
-# =========================
+
+def main_menu():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.row("💰 Прайс", "📄 Оплата и условия")
+    kb.row("✅ Я оплатил(-а)")
+    return kb
+
+
 START_TEXT = (
-    "Здравствуйте! 👋\n"
+    "Здравствуйте! 👋\n\n"
     "Это бот для покупки брифа для дизайнеров.\n\n"
-    "Вы получаете готовый рабочий документ, который помогает четко формулировать задачи, "
-    "фиксировать пожелания клиента и сокращать время на правки.\n\n"
-    "Выберите действие ниже."
+    "Выберите действие в меню ниже:"
 )
 
 PRICE_TEXT = (
-    "📦 <b>Тариф: «Стандарт»</b>\n"
-    "💰 <b>Цена:</b> 30 000 тг (единоразово)\n\n"
+    "💰 <b>Прайс</b>\n\n"
+    "📦 <b>Тариф:</b> «Стандарт»\n"
+    f"💵 <b>Цена:</b> {PRICE} тг (единоразово)\n\n"
     "📄 <b>Состав:</b>\n"
     "— Готовый шаблон брифа (ссылка на документ)\n"
     "— Доступ на редактирование и скачивание\n"
-    "— Можно использовать для любого количества проектов\n"
+    "— Можно использовать для любого количества проектов\n\n"
     "⏳ <b>Срок доступа:</b> бессрочно"
 )
 
-OFFER_TEXT = (
-    "📄 <b>Условия покупки (оферта):</b>\n\n"
-    "• Вы приобретаете цифровой товар — готовый шаблон брифа.\n"
-    "• Доступ предоставляется бессрочно, без абонентской платы.\n"
-    "• Возврат средств за цифровые товары не производится после получения доступа к документу.\n"
-    "• Запрещена перепродажа и публикация документа в открытый доступ.\n"
-    "• Оплата проверяется вручную. После подтверждения оплаты Вам будет автоматически выдан доступ.\n\n"
-    "Чтобы оплатить — откройте раздел «💳 Оплата»."
+PAYMENT_TEXT = (
+    "📄 <b>Оплата и условия</b>\n\n"
+    f"💳 Реквизиты: <code>{CARD_NUMBER}</code>\n"
+    f"👤 Получатель: <b>{CARD_HOLDER}</b>\n"
+    f"💰 Сумма: <b>{PRICE} тг</b>\n\n"
+    "После оплаты нажмите <b>✅ Я оплатил(-а)</b> и отправьте чек (скрин/фото)."
 )
 
-PAY_TEXT = (
-    "💳 <b>Как оплатить:</b>\n"
-    "Перевод на карту (Казахстан).\n\n"
-    "🏦 <b>Реквизиты:</b>\n"
-    "Карта: <code>4400 4303 3800 4382</code>\n"
-    "Получатель: <b>NAGYZKHAN YERIMBET</b>\n\n"
-    "📝 <b>В комментарии к переводу обязательно укажите:</b>\n"
-    "<code>@ваш_telegram_username</code>\n\n"
-    "📸 После оплаты нажмите «✅ Я оплатил(-а)» и отправьте скриншот чека."
-)
-
-ASK_AMOUNT_TEXT = "Пожалуйста, укажите сумму оплаты (например: 30000)."
-ASK_RECEIPT_TEXT = "Спасибо. Теперь, пожалуйста, отправьте чек/скрин (фото или файл)."
-
-WAIT_TEXT = (
-    "Спасибо! ✅\n"
-    "Чек отправлен на проверку.\n"
-    "После подтверждения оплаты Вам автоматически придет одноразовая ссылка на канал."
-)
-
-REJECT_TEXT = (
-    "❌ <b>Оплата не подтверждена.</b>\n"
-    "Пожалуйста, проверьте перевод и отправьте чек повторно."
-)
-
-SUPPORT_PROMPT = (
-    "Пожалуйста, напишите ваш вопрос одним сообщением.\n"
-    "Мы передадим его администратору."
-)
-
-# =========================
-# UI
-# =========================
-def main_menu():
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("💰 Прайс", "📄 Условия")
-    kb.add("💳 Оплата", "✅ Я оплатил(-а)")
-    kb.add("💬 Поддержка")
-    return kb
-
-def admin_kb(buyer_id: int):
-    kb = types.InlineKeyboardMarkup()
-    kb.row(
-        types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"admin_ok:{buyer_id}"),
-        types.InlineKeyboardButton("❌ Отклонить", callback_data=f"admin_no:{buyer_id}")
-    )
-    return kb
-
-# =========================
-# HELPERS
-# =========================
-def safe_name(u):
-    fn = u.first_name or ""
-    ln = u.last_name or ""
-    return (fn + " " + ln).strip() or "Без имени"
-
-def get_channel_id():
-    # Will raise error if CHANNEL_USERNAME is wrong or bot has no access
-    chat = bot.get_chat(CHANNEL_USERNAME)
-    return chat.id
-
-def create_one_time_invite():
-    channel_id = get_channel_id()
-    invite = bot.create_chat_invite_link(chat_id=channel_id, member_limit=1)
-    return invite.invite_link
-
-# =========================
-# COMMANDS
-# =========================
+# ================== КОМАНДЫ ==================
 @bot.message_handler(commands=["start"])
-def cmd_start(message):
-    uid = message.from_user.id
-    st(uid)  # init
-    bot.send_message(message.chat.id, START_TEXT, reply_markup=main_menu())
+def start(m):
+    bot.send_message(m.chat.id, START_TEXT, reply_markup=main_menu())
 
-@bot.message_handler(commands=["help"])
-def cmd_help(message):
-    bot.send_message(message.chat.id, "Используйте кнопки меню или команду /start.", reply_markup=main_menu())
 
-# =========================
-# MENU HANDLERS
-# =========================
-@bot.message_handler(func=lambda m: (m.text or "").strip() == "💰 Прайс")
-def on_price(message):
-    bot.send_message(message.chat.id, PRICE_TEXT)
+# ================== КНОПКИ (ВАЖНО: ВЫШЕ ОБЩЕГО HANDLER) ==================
+@bot.message_handler(func=lambda m: norm(m.text) in ["прайс"])
+def price(m):
+    bot.send_message(m.chat.id, PRICE_TEXT, reply_markup=main_menu())
 
-@bot.message_handler(func=lambda m: (m.text or "").strip() == "📄 Условия")
-def on_offer(message):
-    bot.send_message(message.chat.id, OFFER_TEXT)
 
-@bot.message_handler(func=lambda m: (m.text or "").strip() == "💳 Оплата")
-def on_pay(message):
-    bot.send_message(message.chat.id, PAY_TEXT)
+@bot.message_handler(func=lambda m: norm(m.text) in ["оплата и условия", "оплата", "условия"])
+def pay_conditions(m):
+    bot.send_message(m.chat.id, PAYMENT_TEXT, reply_markup=main_menu())
 
-@bot.message_handler(func=lambda m: (m.text or "").strip() == "💬 Поддержка")
-def on_support(message):
-    set_state(message.from_user.id, None)
-    bot.send_message(message.chat.id, SUPPORT_PROMPT)
 
-@bot.message_handler(func=lambda m: (m.text or "").strip() == "✅ Я оплатил(-а)")
-def on_paid(message):
-    uid = message.from_user.id
-    set_state(uid, "wait_amount")
-    bot.send_message(message.chat.id, ASK_AMOUNT_TEXT)
+@bot.message_handler(func=lambda m: norm(m.text) in ["я оплатил(-а)", "я оплатил", "я оплатила"])
+def i_paid(m):
+    pending_users[m.from_user.id] = True
+    bot.send_message(
+        m.chat.id,
+        "Спасибо! ✅\nПожалуйста, отправьте <b>чек/скрин оплаты</b> (фото).",
+        reply_markup=main_menu()
+    )
 
-# =========================
-# RECEIPT FLOW: amount -> receipt
-# =========================
-@bot.message_handler(content_types=["text"])
-def on_text(message):
-    uid = message.from_user.id
-    text = (message.text or "").strip()
 
-    # ignore menu texts already handled above
-    if text in {"💰 Прайс", "📄 Условия", "💳 Оплата", "✅ Я оплатил(-а)", "💬 Поддержка"}:
-        return
-    if text.startswith("/"):
+# ================== ЧЕК (ФОТО) ==================
+@bot.message_handler(content_types=["photo"])
+def handle_receipt(m):
+    # принимаем фото только если пользователь нажал "Я оплатил(-а)"
+    if not pending_users.get(m.from_user.id):
+        bot.send_message(
+            m.chat.id,
+            "Если это чек, сначала нажмите <b>✅ Я оплатил(-а)</b>.",
+            reply_markup=main_menu()
+        )
         return
 
-    state = st(uid)["state"]
-
-    # step 1: amount
-    if state == "wait_amount":
-        st(uid)["amount"] = text
-        set_state(uid, "wait_receipt")
-        bot.send_message(message.chat.id, ASK_RECEIPT_TEXT)
-        return
-
-    # support messages (any other text)
-    if uid != ADMIN_ID:
-        try:
-            username = message.from_user.username or "без_username"
-            name = safe_name(message.from_user)
-            bot.send_message(
-                ADMIN_ID,
-                "💬 <b>Сообщение в поддержку</b>\n"
-                f"От: <b>{name}</b> (@{username})\n"
-                f"id: <code>{uid}</code>\n\n"
-                f"{text}"
-            )
-            bot.send_message(message.chat.id, "Спасибо! Сообщение передано администратору ✅")
-        except Exception:
-            bot.send_message(message.chat.id, "⚠️ Сейчас не удалось передать сообщение. Пожалуйста, попробуйте позже.")
-    else:
-        bot.send_message(message.chat.id, "Вы администратор. Используйте кнопки под чеками для подтверждения.")
-
-@bot.message_handler(content_types=["photo", "document"])
-def on_receipt(message):
-    uid = message.from_user.id
-    state = st(uid)["state"]
-
-    if state != "wait_receipt":
-        bot.send_message(message.chat.id, "Чтобы отправить чек, нажмите «✅ Я оплатил(-а)» и следуйте шагам.")
-        return
-
-    amount = st(uid)["amount"] or "-"
-    username = message.from_user.username or "без_username"
-    name = safe_name(message.from_user)
+    user = m.from_user
+    username = f"@{user.username}" if user.username else "нет username"
 
     caption = (
-        "🧾 <b>Чек на проверку</b>\n"
-        f"👤 {name} (@{username})\n"
-        f"🆔 <code>{uid}</code>\n"
-        f"💰 Сумма: <b>{amount}</b>\n"
-        f"⏱ {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        "🧾 <b>Новый чек</b>\n"
+        f"👤 Пользователь: <b>{user.first_name}</b>\n"
+        f"🔗 Username: {username}\n"
+        f"🆔 ID: <code>{user.id}</code>\n"
+        f"💰 Сумма: <b>{PRICE} тг</b>\n\n"
+        "✅ Статус: <i>ожидает подтверждения</i>\n\n"
+        "Чтобы подтвердить — ответьте пользователю вручную или напишите ему в ЛС."
     )
 
-    try:
-        if message.photo:
-            bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=caption, reply_markup=admin_kb(uid))
-        else:
-            bot.send_document(ADMIN_ID, message.document.file_id, caption=caption, reply_markup=admin_kb(uid))
+    bot.send_photo(ADMIN_ID, m.photo[-1].file_id, caption=caption)
+    bot.send_message(m.chat.id, "Спасибо! Сообщение передано администратору ✅", reply_markup=main_menu())
 
-        bot.send_message(message.chat.id, WAIT_TEXT)
+    pending_users.pop(m.from_user.id, None)
 
-        # reset state
-        st(uid)["amount"] = None
-        set_state(uid, None)
-    except Exception as e:
-        bot.send_message(message.chat.id, "⚠️ Не удалось отправить чек администратору. Попробуйте ещё раз через минуту.")
-        try:
-            bot.send_message(ADMIN_ID, f"❗ Ошибка при пересылке чека админу: {e}")
-        except Exception:
-            pass
 
-# =========================
-# ADMIN CALLBACKS
-# =========================
-@bot.callback_query_handler(func=lambda c: c.data.startswith("admin_ok:") or c.data.startswith("admin_no:"))
-def admin_decision(call):
-    if call.from_user.id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "Нет доступа.")
+# ================== ПОДТВЕРЖДЕНИЕ (ТОЛЬКО ДЛЯ АДМИНА) ==================
+# Админ пишет: /approve 123456789
+@bot.message_handler(commands=["approve"])
+def approve(m):
+    if m.from_user.id != ADMIN_ID:
         return
 
-    action, buyer_id_str = call.data.split(":")
-    buyer_id = int(buyer_id_str)
-
-    if action == "admin_no":
-        try:
-            bot.send_message(buyer_id, REJECT_TEXT)
-            bot.answer_callback_query(call.id, "Отклонено ❌")
-            bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
-        except Exception as e:
-            bot.answer_callback_query(call.id, "Ошибка отправки пользователю")
-            try:
-                bot.send_message(ADMIN_ID, f"❗ Ошибка при отклонении: {e}")
-            except Exception:
-                pass
+    parts = m.text.split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        bot.send_message(m.chat.id, "Использование: <code>/approve USER_ID</code>")
         return
 
-    # action == admin_ok: create one-time invite and send
-    try:
-        link = create_one_time_invite()
-        text = (
-            "✅ <b>Оплата подтверждена!</b>\n\n"
-            "Вот Ваша одноразовая ссылка для доступа:\n"
-            f"{link}\n\n"
-            "Ссылка рассчитана на 1 вход. Если возникнут сложности — напишите в поддержку."
-        )
-        bot.send_message(buyer_id, text)
+    user_id = int(parts[1])
+    bot.send_message(
+        user_id,
+        "✅ Оплата подтверждена!\n\n"
+        f"Вот ваш доступ: {CHANNEL_LINK}\n\n"
+        "Если ссылка не открывается — напишите, пожалуйста, администратору.",
+    )
+    bot.send_message(m.chat.id, f"Готово ✅ Пользователю отправлен доступ: <code>{user_id}</code>")
 
-        bot.answer_callback_query(call.id, "Подтверждено ✅ Ссылка отправлена")
-        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
 
-    except Exception as e:
-        bot.answer_callback_query(call.id, "Не удалось создать/отправить ссылку")
-        try:
-            bot.send_message(
-                ADMIN_ID,
-                "❗ <b>Ошибка выдачи ссылки</b>\n"
-                f"Проверьте права бота в канале и CHANNEL_USERNAME.\n"
-                f"Ошибка: <code>{e}</code>"
-            )
-        except Exception:
-            pass
+# ================== ОБЩИЙ HANDLER (ПОСЛЕДНИМ!) ==================
+@bot.message_handler(content_types=["text"])
+def other_text(m):
+    # Если человек пишет что-то другое — пересылаем админу как вопрос
+    user = m.from_user
+    username = f"@{user.username}" if user.username else "нет username"
 
-# =========================
-# RUN
-# =========================
+    caption = (
+        "📩 <b>Сообщение от пользователя</b>\n"
+        f"👤 {user.first_name}\n"
+        f"🔗 {username}\n"
+        f"🆔 <code>{user.id}</code>\n\n"
+        f"💬 Текст: {m.text}"
+    )
+
+    bot.send_message(ADMIN_ID, caption)
+    bot.send_message(m.chat.id, "Спасибо! Сообщение передано администратору ✅", reply_markup=main_menu())
+
+
+# ================== ЗАПУСК ==================
 if __name__ == "__main__":
     print("Bot started...")
-    bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print("Polling error:", e)
+            time.sleep(5)
